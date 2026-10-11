@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Safra em Dia — MVP</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#f3f6f3;color:#203127;
+font:16px system-ui,sans-serif}
+main{max-width:960px;margin:auto;padding:20px}
+h1{margin-bottom:6px}
+h2{font-size:1.2rem}
+section{background:white;border:1px solid #dce5dd;
+border-radius:12px;padding:20px;margin:18px 0}
+.notice{background:#fff6dc;padding:14px;border-radius:8px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));
+gap:14px}
+label{display:block;font-weight:600}
+input,select,button{font:inherit}
+input,select{display:block;width:100%;padding:11px;
+margin-top:6px;border:1px solid #8b9b8e;border-radius:6px}
+button{padding:11px 16px;border:0;border-radius:6px;
+background:#21643b;color:white;cursor:pointer;margin:10px 8px 0 0}
+button:focus-visible,input:focus-visible,select:focus-visible{
+outline:3px solid #da9700;outline-offset:3px}
+.danger{background:#943131}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));
+gap:10px}
+.card{padding:14px;background:#edf5ee;border-radius:8px}
+.card strong{display:block;font-size:1.3rem;margin-top:6px}
+.record{padding:12px 0;border-bottom:1px solid #ddd}
+small{display:block;margin-top:8px;line-height:1.5}
+#message{min-height:24px;font-weight:600}
+</style>
+</head>
+<body>
+<main>
+<header>
+<h1>Safra em Dia</h1>
+<p>Acompanhamento de colheita — MVP acadêmico</p>
+</header>
+
+<p class="notice">
+Use somente dados fictícios. Os registros ficam neste navegador,
+sem login ou sincronização. Exporte backups para evitar perdas.
+Este MVP não está pronto para uso comercial.
+</p>
+
+<p id="message" role="status" aria-live="polite"></p>
+
+<section>
+<h2>1. Cadastro da safra</h2>
+<form id="farmForm">
+<div class="grid">
+<label>Propriedade fictícia
+<input id="property" required maxlength="80"></label>
+<label>Cultura
+<select id="crop"><option>Soja</option><option>Milho</option></select>
+</label>
+<label>Identificação da safra
+<input id="season" required maxlength="40" placeholder="2026/2027">
+</label>
+<label>Área plantada (ha)
+<input id="planted" type="number" min="0.01" step="0.01" required>
+</label>
+<label>Área em penhor (ha)
+<input id="pledged" type="number" min="0" step="0.01"
+value="0" required></label>
+</div>
+<button>Salvar safra</button>
+</form>
+</section>
+
+<section>
+<h2>2. Registro de colheita</h2>
+<form id="recordForm">
+<div class="grid">
+<label>Data
+<input id="date" type="date" required></label>
+<label>Área colhida (ha)
+<input id="hectares" type="number" min="0.01" step="0.01" required>
+</label>
+<label>Produção (t)
+<input id="tonnes" type="number" min="0" step="0.01" required>
+</label>
+</div>
+<button>Adicionar registro</button>
+</form>
+</section>
+
+<section>
+<h2>3. Resumo</h2>
+<p id="farmSummary">Cadastre uma safra para começar.</p>
+<label>Data para consultar o total do dia
+<input id="queryDate" type="date"></label>
+<div id="cards" class="cards" style="margin-top:14px"></div>
+</section>
+
+<section>
+<h2>4. Registros</h2>
+<div id="records"></div>
+</section>
+
+<section>
+<h2>5. Exportação e backup</h2>
+<button id="csv" type="button">Exportar CSV</button>
+<button id="backup" type="button">Baixar backup JSON</button>
+<label style="margin-top:18px">Restaurar backup JSON
+<input id="restore" type="file" accept=".json,application/json">
+</label>
+<small>
+A restauração substitui os dados atuais após confirmação.
+O CSV contém os registros; o JSON inclui também o cadastro da safra.
+</small>
+</section>
+</main>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const KEY = "safra-em-dia-v1";
+let state = {farm:null, records:[]};
+const fmt = n => Number(n).toLocaleString("pt-BR",{
+minimumFractionDigits:2,maximumFractionDigits:2});
+const round = n => Math.round((n + Number.EPSILON)*100)/100;
+const total = () => round(state.records.reduce((s,r)=>s+r.hectares,0));
+const today = new Date();
+const localDate = [
+today.getFullYear(),
+String(today.getMonth()+1).padStart(2,"0"),
+String(today.getDate()).padStart(2,"0")
+].join("-");
+$("date").value = $("queryDate").value = localDate;
+
+function message(text){$("message").textContent=text;}
+
+function validDate(value){
+if(typeof value!=="string" || !/^\d{4}-\d{2}-\d{2}$/.test(value))
+return false;
+const d=new Date(value+"T00:00:00Z");
+return Number.isFinite(d.getTime()) &&
+d.toISOString().slice(0,10)===value;
+}
+
+function validNumber(n,min){
+return typeof n==="number" && Number.isFinite(n) &&
+n>=min && Math.abs(n-round(n))<0.000001;
+}
+
+function validate(s){
+if(!s || !Array.isArray(s.records))return false;
+if(s.farm===null)return s.records.length===0;
+const f=s.farm;
+if(!f || typeof f.property!=="string" ||
+!f.property.trim() || f.property.length>80 ||
+typeof f.season!=="string" || !f.season.trim() ||
+f.season.length>40 || !["Soja","Milho"].includes(f.crop) ||
+!validNumber(f.planted,0.01) || !validNumber(f.pledged,0) ||
+f.pledged>f.planted)return false;
+const ids=new Set();
+for(const r of s.records){
+if(!r || typeof r.id!=="string" || !r.id || ids.has(r.id) ||
+!validDate(r.date) || !validNumber(r.hectares,0.01) ||
+!validNumber(r.tonnes,0))return false;
+ids.add(r.id);
+}
+return round(s.records.reduce((sum,r)=>sum+r.hectares,0))
+<=f.planted;
+}
+
+function save(next){
+try{
+localStorage.setItem(KEY,JSON.stringify(next));
+state=next;
+render();
+message("Dados salvos neste navegador.");
+return true;
+}catch{
+message("Não foi possível salvar. Verifique o armazenamento do navegador.");
+return false;
+}
+}
+
+function fillFarm(){
+if(!state.farm)return;
+const f=state.farm;
+$("property").value=f.property;
+$("crop").value=f.crop;
+$("season").value=f.season;
+$("planted").value=f.planted;
+$("pledged").value=f.pledged;
+}
+
+function render(){
+const f=state.farm;
+$("farmSummary").textContent=f ?
+`${f.property} | ${f.crop} | Safra ${f.season} | `+
+`Plantada: ${fmt(f.planted)} ha | Em penhor: ${fmt(f.pledged)} ha`
+: "Cadastre uma safra para começar.";
+const accumulated=total();
+const day=round(state.records
+.filter(r=>r.date===$("queryDate").value)
+.reduce((s,r)=>s+r.hectares,0));
+const tonnes=round(state.records.reduce((s,r)=>s+r.tonnes,0));
+const values=[
+["Colhido na data",fmt(day)+" ha"],
+["Colhido acumulado",fmt(accumulated)+" ha"],
+["Produção acumulada",fmt(tonnes)+" t"],
+["Área restante",fmt(f?round(f.planted-accumulated):0)+" ha"],
+["Avanço",fmt(f?accumulated/f.planted*100:0)+"%"]
+];
+$("cards").replaceChildren();
+for(const [label,value] of values){
+const card=document.createElement("div");
+card.className="card";
+const title=document.createElement("span");
+title.textContent=label;
+const strong=document.createElement("strong");
+strong.textContent=value;
+card.append(title,strong);
+$("cards").append(card);
+}
+$("records").replaceChildren();
+if(!state.records.length){
+$("records").textContent="Nenhum registro cadastrado.";
+return;
+}
+for(const r of [...state.records].sort((a,b)=>b.date.localeCompare(a.date))){
+const row=document.createElement("div");
+row.className="record";
+const text=document.createElement("span");
+text.textContent=`${r.date.split("-").reverse().join("/")} — `+
+`${fmt(r.hectares)} ha — ${fmt(r.tonnes)} t `;
+const button=document.createElement("button");
+button.type="button";
+button.className="danger";
+button.textContent="Excluir";
+button.setAttribute("aria-label",`Excluir registro de ${r.date}`);
+button.onclick=()=>{
+if(confirm("Excluir este registro?")){
+save({...state,records:state.records.filter(x=>x.id!==r.id)});
+}
+};
+row.append(text,button);
+$("records").append(row);
+}
+}
+
+$("farmForm").onsubmit=e=>{
+e.preventDefault();
+const farm={
+property:$("property").value.trim(),
+crop:$("crop").value,
+season:$("season").value.trim(),
+planted:Number($("planted").value),
+pledged:Number($("pledged").value)
+};
+const next={...state,farm};
+if(!validate(next)){
+message("Revise as áreas: penhor e colheita acumulada não podem exceder a área plantada.");
+return;
+}
+save(next);
+};
+
+$("recordForm").onsubmit=e=>{
+e.preventDefault();
+if(!state.farm){message("Cadastre e salve a safra primeiro.");return;}
+const record={
+id:Date.now().toString(36)+"-"+Math.random().toString(36).slice(2),
+date:$("date").value,
+hectares:Number($("hectares").value),
+tonnes:Number($("tonnes").value)
+};
+const next={...state,records:[...state.records,record]};
+if(!validate(next)){
+message("Registro inválido. Confira os valores e o limite da área plantada.");
+return;
+}
+if(save(next)){
+$("queryDate").value=record.date;
+$("hectares").value=$("tonnes").value="";
+render();
+}
+};
+$("queryDate").onchange=render;
+
+function download(content,name,type){
+const url=URL.createObjectURL(new Blob([content],{type}));
+const a=document.createElement("a");
+a.href=url;a.download=name;
+document.body.append(a);a.click();a.remove();
+setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+
+$("csv").onclick=()=>{
+if(!state.farm){message("Cadastre uma safra primeiro.");return;}
+const rows=[["Data","Area colhida (ha)","Producao (t)"],
+...state.records.map(r=>[
+r.date,r.hectares.toFixed(2).replace(".",","),
+r.tonnes.toFixed(2).replace(".",",")
+])];
+download("\uFEFF"+rows.map(r=>r.join(";")).join("\r\n"),
+"safra-registros.csv","text/csv;charset=utf-8");
+message("Exportação CSV solicitada. Confira os downloads.");
+};
+
+$("backup").onclick=()=>{
+download(JSON.stringify(state,null,2),"safra-backup.json",
+"application/json");
+message("Backup solicitado. Confira os downloads.");
+};
+
+$("restore").onchange=async e=>{
+const file=e.target.files[0];
+if(!file)return;
+try{
+if(file.size>2000000)throw new Error("Arquivo muito grande");
+const candidate=JSON.parse(await file.text());
+if(!validate(candidate))throw new Error("Backup inválido");
+if(confirm("Substituir os dados atuais pelos dados deste backup?")){
+if(save(candidate))fillFarm();
+}
+}catch{
+message("Não foi possível restaurar. Selecione um backup válido deste MVP.");
+}finally{e.target.value="";}
+};
+
+try{
+const stored=localStorage.getItem(KEY);
+if(stored){
+const parsed=JSON.parse(stored);
+if(validate(parsed))state=parsed;
+else message("Dados armazenados inválidos. Restaure um backup válido.");
+}
+}catch{
+message("Não foi possível ler o armazenamento local.");
+}
+fillFarm();
+render();
+</script>
+</body>
+</html>
