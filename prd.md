@@ -156,6 +156,13 @@ Não está pronto para operação institucional ou comercial.
 Link público: [INSERIR APÓS PUBLICAR E VERIFICAR]
 
 ## 16. Situação dos testes
-Implementação inicial elaborada.
-Testes de execução e avaliação com usuários: pendentes.
-Atualizar esta seção somente após realizar as verificações.
+
+A responsável pelo projeto realizou uma verificação funcional
+do MVP com dados fictícios.
+
+O fluxo testado funcionou conforme seu relato, e os arquivos
+exportados foram baixados com sucesso.
+
+Esta verificação não constitui validação da hipótese de negócio
+nem avaliação com pessoas do público pretendido. Essas etapas
+permanecem previstas para uma evolução do projeto.
